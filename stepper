@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# stepper - run a command, log its output, leave a success-or-not-marker.
+#           if the command has already been run successfully, do nothing.
+#
+# in a script, use stepper to wrap a sequence of steps, like:
+#
+#   stepper do-a-thing
+#   stepper do-another-thing with-some-args
+#   stepper last-thing
+#
+# the script can be re-run and `stepper` will skip commands that previously
+# exited successfully. commands that previously failed are retried.
+#
+# stepper returns the command's exit status, so the calling script can stop
+# execution at the first failed step (eg: with `set -e`)
+#
+# clean previous run markers with `stepper clean`
+#
+# see https://github.com/jonyesno/stash/README.md for author and license
+
+trace() {
+  local STAMP
+  STAMP=$( date '+%Y-%m-%dT%H:%M:%S' )
+  echo "[stepper] ${STAMP} $*" >&2
+}
+
+fail() {
+  trace "FATAL $*"
+  exit 1
+}
+trap fail ERR
+
+LOGDIR=${STEPPER_LOGDIR:-~/tmp/stepper}
+mkdir -p "${LOGDIR}"
+
+if [[ -z "$*" ]] ; then
+  fail "usage: stepper command"
+fi
+
+LOGNAME="$*"
+LOGNAME=${LOGNAME//[^-a-zA-Z0-9]/_}
+
+LOG=${LOGDIR}/${LOGNAME}.log
+RAN_OK=${LOGDIR}/${LOGNAME}.ok
+RAN_NOK=${LOGDIR}/${LOGNAME}.nok
+
+if [[ ${LOGNAME} == "clean" ]] ; then
+  trace "wiping previous stepper logs"
+  rm -Rf "${LOGDIR}"
+  mkdir -p "${LOGDIR}"
+  exit 0
+fi
+
+if [[ -f ${RAN_OK} ]] ; then
+  trace "${LOGNAME} already ran ok, skipping"
+  exit 0
+fi
+
+if [[ -f ${RAN_NOK} ]] ; then
+  trace "${LOGNAME} previous failed, re-running"
+else
+  trace "${LOGNAME} not previously run, running"
+fi
+
+trap - ERR
+"$@" 2>&1 | tee "${LOG}"
+ERROR=$?
+trap fail ERR
+
+if [[ ${ERROR} -eq 0 ]] ; then
+  trace "${LOGNAME} ran ok"
+  touch "${RAN_OK}"
+  exit 0
+else
+  trace "${LOGNAME} failed"
+  touch "${RAN_NOK}"
+  exit ${ERROR}
+fi

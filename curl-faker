@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# curl-faker - wrapper to help testing sites directly while keeping Host
+#              headers and SNI aligned. helpful to test standby sites and such.
+#              this just sets up curl's `--resolve` option for port 80, 443
+#
+# usage: curl-faker ip-or-fqdn url [ curl-options ]
+#
+# example: curl-faker 1.2.3.4 https://www.zikomo.xyz
+#          connect to 1.2.3.4 as if https://www.zikomo.xyz was really hosted there
+#
+#          curl-faker foo.example.com https://www.zikomo.xyz -kv
+#          connect to `foo.example.com` and connect to that, set verbose and insecure modes
+#          (the name resolution is basic)
+#
+# see https://github.com/jonyesno/stash/README.md for author and license
+
+IFS=$'\n\t'
+
+trace() {
+  local STAMP
+  STAMP=$( date '+%Y-%m-%dT%H:%M:%S' )
+  echo "[curl-faker] ${STAMP} $*" >&2
+}
+
+fail() {
+  trace "FATAL $*"
+  exit 1
+}
+trap fail ERR
+
+IP=${1:-}
+URL=${2:-}
+
+if [[ -z ${IP} ]] || [[ -z ${URL} ]] ; then
+  fail "usage: curl-faker ip-or-fqdn url [ curl-options ]"
+fi
+shift 2
+
+if [[ ${IP} =~ [a-z] ]] ; then
+  _IP=$( dig +short "${IP}" | head -1 )
+  if [[ -z ${_IP} ]] ; then
+    fail "couldn't lookup ${IP}"
+  fi
+  IP=${_IP}
+fi
+
+HOST=$( echo "${URL}" | awk -F / '{print $3;}' )
+
+echo curl -s -v --resolve "${HOST}:80:${IP}" --resolve "${HOST}:443:${IP}" "$@" "${URL}"
+exec curl -s -v --resolve "${HOST}:80:${IP}" --resolve "${HOST}:443:${IP}" "$@" "${URL}"
